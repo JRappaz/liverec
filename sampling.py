@@ -22,10 +22,11 @@ def sample_negs(data,args):
     neg = torch.zeros_like(pos)
 
     ci = torch.nonzero(pos, as_tuple=False)
+    ps = pos[ci[:,0],ci[:,1]].tolist()
+    ts = xts[ci[:,0],ci[:,1]].tolist()
 
     for i in range(ci.shape[0]):
-        p = pos[ci[i,0],ci[i,1]].item()
-        t = xts[ci[i,0],ci[i,1]].item()
+        p = ps[i]; t = ts[i]
 
         if args.uniform:
             neg[ci[i,0],ci[i,1]] = sample_uni(p,t,args)

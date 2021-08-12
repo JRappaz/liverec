@@ -21,7 +21,7 @@ def arg_parse():
 
         parser.add_argument('--num_heads', dest='num_heads', type=int,
             help='Numer of heads to use for multi-heads attention')
-        parser.add_argument('--num_heads_out', dest='num_heads_out', type=int,
+        parser.add_argument('--num_heads_ctx', dest='num_heads_ctx', type=int,
             help='Numer of heads to use for multi-heads attention CTX')
 
 
@@ -61,9 +61,9 @@ def arg_parse():
         parser.add_argument('--num_epochs', dest='num_epochs', type=int,
             help='Number of training epochs')
         parser.add_argument('--num_att', dest='num_att', type=int,
-            help='Num attention modules')
-        parser.add_argument('--num_att_out', dest='num_att_out', type=int,
-            help='Num attention modules for the output')
+            help='Num attention module for seq encoding')
+        parser.add_argument('--num_att_ctx', dest='num_att_ctx', type=int,
+            help='Num attention for ctx module')
  
         parser.add_argument('--topk_att', dest='topk_att', type=int,
             help='Items to send to attentive output')
@@ -92,9 +92,9 @@ def arg_parse():
                         mask_prob=0.5,  
                         batch_size=100, 
                         num_att=2,
-                        num_att_out=2,
+                        num_att_ctx=2,
                         num_heads=4,
-                        num_heads_out=4,
+                        num_heads_ctx=4,
                         num_iter=200,
                         seq_len=16,  
                         topk_att=64,  

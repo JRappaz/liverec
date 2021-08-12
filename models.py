@@ -13,7 +13,7 @@ def get_model_type(args):
     mto += '_' + str(args.K)
     mto += '_' + str(args.l2)
     mto += '_' + str(args.topk_att)
-    mto += '_' + str(args.num_att_out)
+    mto += '_' + str(args.num_att_ctx)
     mto += '_' + str(args.seq_len)
     mto += "_rep" if args.fr_rep else ""
     mto += "_ctx" if args.fr_ctx else ""
@@ -50,21 +50,24 @@ class PointWiseFeedForward(nn.Module):
         return outputs
 
 class Attention(nn.Module):
-    def __init__(self, ):
+    def __init__(self, args, num_att, num_heads, causality=False):
         super(Attention, self).__init__()
-        self.attention_layernorms = nn.ModuleList() # to be Q for self-attention
+        self.args = args
+        self.causality = causality
+
+        self.attention_layernorms = nn.ModuleList()
         self.attention_layers = nn.ModuleList()
         self.forward_layernorms = nn.ModuleList()
         self.forward_layers = nn.ModuleList()
         self.last_layernorm = nn.LayerNorm(args.K, eps=1e-8)
         
-        for _ in range(args.num_att):
+        for _ in range(num_att):
             new_attn_layernorm = nn.LayerNorm(args.K, eps=1e-8)
             self.attention_layernorms.append(new_attn_layernorm)
 
             new_attn_layer =  nn.MultiheadAttention(args.K,
-                                                            args.num_heads_out,
-                                                            0.2)
+                                                    num_heads,
+                                                    0.2)
             self.attention_layers.append(new_attn_layer)
 
             new_fwd_layernorm = nn.LayerNorm(args.K, eps=1e-8)
@@ -73,10 +76,16 @@ class Attention(nn.Module):
             new_fwd_layer = PointWiseFeedForward(args.K, 0.2)
             self.forward_layers.append(new_fwd_layer)
 
-    def forward(self, seqs, causality=False):
-        if causality:
+    def forward(self, seqs, timeline_mask=None):
+        if self.causality:
             tl = seqs.shape[1] # time dim len for enforce causality
-            attention_mask = ~torch.tril(torch.ones((tl, tl), dtype=torch.bool, device=self.args.device))
+            attention_mask = ~torch.tril(torch.ones((tl, tl), 
+                                         dtype=torch.bool, 
+                                         device=self.args.device))
+        else: attention_mask = None
+        
+        if timeline_mask != None:
+            seqs *= ~timeline_mask.unsqueeze(-1)
 
         for i in range(len(self.attention_layers)):
             seqs = torch.transpose(seqs, 0, 1)
@@ -88,7 +97,8 @@ class Attention(nn.Module):
 
             seqs = self.forward_layernorms[i](seqs)
             seqs = self.forward_layers[i](seqs)
-            seqs *=  ~timeline_mask.unsqueeze(-1)
+            if timeline_mask != None:
+                seqs *=  ~timeline_mask.unsqueeze(-1)
 
         return self.last_layernorm(seqs)
 
@@ -103,50 +113,58 @@ class LiveRec(nn.Module):
         self.emb_dropout = nn.Dropout(p=0.2)
 
         # Sequence encoding attention
-        self.attention_layernorms = nn.ModuleList() # to be Q for self-attention
-        self.attention_layers = nn.ModuleList()
-        self.forward_layernorms = nn.ModuleList()
-        self.forward_layers = nn.ModuleList()
+        self.att = Attention(args, 
+                             args.num_att, 
+                             args.num_heads, 
+                             causality=True)
+        #self.attention_layernorms = nn.ModuleList() # to be Q for self-attention
+        #self.attention_layers = nn.ModuleList()
+        #self.forward_layernorms = nn.ModuleList()
+        #self.forward_layers = nn.ModuleList()
 
-        self.last_layernorm = nn.LayerNorm(args.K, eps=1e-8)
-        
-        for _ in range(args.num_att):
-            new_attn_layernorm = nn.LayerNorm(args.K, eps=1e-8)
-            self.attention_layernorms.append(new_attn_layernorm)
+        #self.last_layernorm = nn.LayerNorm(args.K, eps=1e-8)
+        #
+        #for _ in range(args.num_att):
+        #    new_attn_layernorm = nn.LayerNorm(args.K, eps=1e-8)
+        #    self.attention_layernorms.append(new_attn_layernorm)
 
-            new_attn_layer =  nn.MultiheadAttention(args.K,
-                                                            args.num_heads_out,
-                                                            0.2)
-            self.attention_layers.append(new_attn_layer)
+        #    new_attn_layer =  nn.MultiheadAttention(args.K,
+        #                                                    args.num_heads_out,
+        #                                                    0.2)
+        #    self.attention_layers.append(new_attn_layer)
 
-            new_fwd_layernorm = nn.LayerNorm(args.K, eps=1e-8)
-            self.forward_layernorms.append(new_fwd_layernorm)
+        #    new_fwd_layernorm = nn.LayerNorm(args.K, eps=1e-8)
+        #    self.forward_layernorms.append(new_fwd_layernorm)
 
-            new_fwd_layer = PointWiseFeedForward(args.K, 0.2)
-            self.forward_layers.append(new_fwd_layer)
+        #    new_fwd_layer = PointWiseFeedForward(args.K, 0.2)
+        #    self.forward_layers.append(new_fwd_layer)
 
         # Availability attention
-        self.attention_layernorms_ctx = nn.ModuleList() # to be Q for self-attention
-        self.attention_layers_ctx = nn.ModuleList()
-        self.forward_layernorms_ctx = nn.ModuleList()
-        self.forward_layers_ctx = nn.ModuleList()
+        self.att_ctx = Attention(args, 
+                                 args.num_att_ctx, 
+                                 args.num_heads_ctx, 
+                                 causality=False)
+        #self.attention_layernorms_ctx = nn.ModuleList() # to be Q for self-attention
+        #self.attention_layers_ctx = nn.ModuleList()
+        #self.forward_layernorms_ctx = nn.ModuleList()
+        #self.forward_layers_ctx = nn.ModuleList()
 
-        self.last_layernorm_ctx = nn.LayerNorm(args.K, eps=1e-8)
-        
-        for _ in range(args.num_att_out):
-            new_attn_layernorm_ctx = nn.LayerNorm(args.K, eps=1e-8)
-            self.attention_layernorms_ctx.append(new_attn_layernorm_ctx)
+        #self.last_layernorm_ctx = nn.LayerNorm(args.K, eps=1e-8)
+        #
+        #for _ in range(args.num_att_out):
+        #    new_attn_layernorm_ctx = nn.LayerNorm(args.K, eps=1e-8)
+        #    self.attention_layernorms_ctx.append(new_attn_layernorm_ctx)
 
-            new_attn_layer_ctx =  nn.MultiheadAttention(args.K,
-                                                            1,
-                                                            0.2)
-            self.attention_layers_ctx.append(new_attn_layer_ctx)
+        #    new_attn_layer_ctx =  nn.MultiheadAttention(args.K,
+        #                                                    1,
+        #                                                    0.2)
+        #    self.attention_layers_ctx.append(new_attn_layer_ctx)
 
-            new_fwd_layernorm_ctx = nn.LayerNorm(args.K, eps=1e-8)
-            self.forward_layernorms_ctx.append(new_fwd_layernorm_ctx)
+        #    new_fwd_layernorm_ctx = nn.LayerNorm(args.K, eps=1e-8)
+        #    self.forward_layernorms_ctx.append(new_fwd_layernorm_ctx)
 
-            new_fwd_layer_ctx = PointWiseFeedForward(args.K, 0.2)
-            self.forward_layers_ctx.append(new_fwd_layer_ctx)
+        #    new_fwd_layer_ctx = PointWiseFeedForward(args.K, 0.2)
+        #    self.forward_layers_ctx.append(new_fwd_layer_ctx)
 
         # Time interval embedding 
         # 24h cycles, except for the first one set to 12h
@@ -163,24 +181,25 @@ class LiveRec(nn.Module):
         seqs = self.emb_dropout(seqs)
 
         timeline_mask = (log_seqs == 0).to(self.args.device)
-        seqs *= ~timeline_mask.unsqueeze(-1) # broadcast in last dim
 
-        tl = seqs.shape[1] # time dim len for enforce causality
-        attention_mask = ~torch.tril(torch.ones((tl, tl), dtype=torch.bool, device=self.args.device))
+        feats = self.att(seqs, timeline_mask)
 
-        for i in range(len(self.attention_layers)):
-            seqs = torch.transpose(seqs, 0, 1)
-            Q = self.attention_layernorms[i](seqs)
-            mha_outputs, _ = self.attention_layers[i](Q, seqs, seqs,
-                                            attn_mask=attention_mask)
-            seqs = Q + mha_outputs
-            seqs = torch.transpose(seqs, 0, 1)
+        #tl = seqs.shape[1] # time dim len for enforce causality
+        #attention_mask = ~torch.tril(torch.ones((tl, tl), dtype=torch.bool, device=self.args.device))
 
-            seqs = self.forward_layernorms[i](seqs)
-            seqs = self.forward_layers[i](seqs)
-            seqs *=  ~timeline_mask.unsqueeze(-1)
+        #for i in range(len(self.attention_layers)):
+        #    seqs = torch.transpose(seqs, 0, 1)
+        #    Q = self.attention_layernorms[i](seqs)
+        #    mha_outputs, _ = self.attention_layers[i](Q, seqs, seqs,
+        #                                    attn_mask=attention_mask)
+        #    seqs = Q + mha_outputs
+        #    seqs = torch.transpose(seqs, 0, 1)
 
-        feats = self.last_layernorm(seqs) # (U, T, C) -> (U, -1, C)
+        #    seqs = self.forward_layernorms[i](seqs)
+        #    seqs = self.forward_layers[i](seqs)
+        #    seqs *=  ~timeline_mask.unsqueeze(-1)
+
+        #feats = self.last_layernorm(seqs) # (U, T, C) -> (U, -1, C)
 
         return feats
 
@@ -262,20 +281,23 @@ class LiveRec(nn.Module):
         inds   = scores.topk(self.args.topk_att,dim=1).indices
         
         # embed selected items
-        seqs = torch.gather(av_embs, 1, inds.unsqueeze(2).expand(-1,-1,self.args.K))
+        seqs = torch.gather(av_embs, 1, inds.unsqueeze(2) \
+                    .expand(-1,-1,self.args.K))
 
-        # loop over multiple attention layers
-        for i in range(len(self.attention_layers_ctx)):
-            seqs = torch.transpose(seqs, 0, 1)
-            Q = self.attention_layernorms_ctx[i](seqs)
-            mha_outputs, _ = self.attention_layers_ctx[i](Q, seqs, seqs)
-            seqs = Q + mha_outputs
-            seqs = torch.transpose(seqs, 0, 1)
+        seqs = self.att_ctx(seqs)
 
-            seqs = self.forward_layernorms_ctx[i](seqs)
-            seqs = self.forward_layers_ctx[i](seqs)
+        ## loop over multiple attention layers
+        #for i in range(len(self.attention_layers_ctx)):
+        #    seqs = torch.transpose(seqs, 0, 1)
+        #    Q = self.attention_layernorms_ctx[i](seqs)
+        #    mha_outputs, _ = self.attention_layers_ctx[i](Q, seqs, seqs)
+        #    seqs = Q + mha_outputs
+        #    seqs = torch.transpose(seqs, 0, 1)
 
-        seqs = self.last_layernorm_ctx(seqs) # (U, T, C) -> (U, -1, C)
+        #    seqs = self.forward_layernorms_ctx[i](seqs)
+        #    seqs = self.forward_layers_ctx[i](seqs)
+
+        #seqs = self.last_layernorm_ctx(seqs) # (U, T, C) -> (U, -1, C)
 
         def expand_att(items):
             av_pos = torch.where(av==items[ci[:,0],ci[:,1]].unsqueeze(1))[1]
@@ -285,7 +307,6 @@ class LiveRec(nn.Module):
             att_feats[is_in,:] = seqs[is_in,torch.where(av_pos.unsqueeze(1) == inds)[1],:]
             
             out = torch.zeros(inputs.shape[0],inputs.shape[1],self.args.K).to(self.args.device)
-            #out[data.x_s_batch,data.x_s[:,3],:] = att_feats
             out[ci[:,0],ci[:,1],:] = att_feats
             return out
 
