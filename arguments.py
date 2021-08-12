@@ -105,7 +105,7 @@ def arg_parse():
                         model_path="/mnt/datastore/rappaz/twitch/models",
                         mto="liverec",
                         device="cuda",
-                        cache_dir="cache"
+                        cache_dir="dataset/"
                        )
 
         args = parser.parse_args()

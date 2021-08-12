@@ -1,9 +1,9 @@
 #!/bin/bash
 
 python main.py --model=LiveRec \
-               --dataset=/mnt/localdata/rappaz/twitch/data/v3/full/ \
+               --dataset="dataset/" \
                --fr_ctx \
                --fr_rep \
-               --model_to="test" \
-               --device="cuda:2" \
+               --model_to="liverec" \
+               --device="cuda" \
                --caching 

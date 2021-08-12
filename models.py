@@ -49,6 +49,50 @@ class PointWiseFeedForward(nn.Module):
         outputs += inputs
         return outputs
 
+class Attention(nn.Module):
+    def __init__(self, ):
+        super(Attention, self).__init__()
+        self.attention_layernorms = nn.ModuleList() # to be Q for self-attention
+        self.attention_layers = nn.ModuleList()
+        self.forward_layernorms = nn.ModuleList()
+        self.forward_layers = nn.ModuleList()
+        self.last_layernorm = nn.LayerNorm(args.K, eps=1e-8)
+        
+        for _ in range(args.num_att):
+            new_attn_layernorm = nn.LayerNorm(args.K, eps=1e-8)
+            self.attention_layernorms.append(new_attn_layernorm)
+
+            new_attn_layer =  nn.MultiheadAttention(args.K,
+                                                            args.num_heads_out,
+                                                            0.2)
+            self.attention_layers.append(new_attn_layer)
+
+            new_fwd_layernorm = nn.LayerNorm(args.K, eps=1e-8)
+            self.forward_layernorms.append(new_fwd_layernorm)
+
+            new_fwd_layer = PointWiseFeedForward(args.K, 0.2)
+            self.forward_layers.append(new_fwd_layer)
+
+    def forward(self, seqs, causality=False):
+        if causality:
+            tl = seqs.shape[1] # time dim len for enforce causality
+            attention_mask = ~torch.tril(torch.ones((tl, tl), dtype=torch.bool, device=self.args.device))
+
+        for i in range(len(self.attention_layers)):
+            seqs = torch.transpose(seqs, 0, 1)
+            Q = self.attention_layernorms[i](seqs)
+            mha_outputs, _ = self.attention_layers[i](Q, seqs, seqs,
+                                            attn_mask=attention_mask)
+            seqs = Q + mha_outputs
+            seqs = torch.transpose(seqs, 0, 1)
+
+            seqs = self.forward_layernorms[i](seqs)
+            seqs = self.forward_layers[i](seqs)
+            seqs *=  ~timeline_mask.unsqueeze(-1)
+
+        return self.last_layernorm(seqs)
+
+
 class LiveRec(nn.Module):
     def __init__(self, args):
         super(LiveRec, self).__init__()
@@ -104,8 +148,6 @@ class LiveRec(nn.Module):
             new_fwd_layer_ctx = PointWiseFeedForward(args.K, 0.2)
             self.forward_layers_ctx.append(new_fwd_layer_ctx)
 
-        self.lin_ctx = nn.Linear(args.K,args.K)
-           
         # Time interval embedding 
         # 24h cycles, except for the first one set to 12h
         self.boundaries = torch.LongTensor([0]+list(range(77,3000+144, 144))).to(args.device)
